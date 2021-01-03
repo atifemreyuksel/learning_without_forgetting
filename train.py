@@ -15,6 +15,7 @@ from models.alexnet import Alexnet
 from models.vggnet import Vggnet
 from loss import TotalLoss
 from datasets.mnist_dataloader import MnistDataset
+from torchvision.transforms import transforms
 
 def seed_everything(seed):
     random.seed(seed)
@@ -30,17 +31,22 @@ def _compute_output_of_old_tasks(init_model_name, train_loader):
         from torchvision.models import alexnet
         model = alexnet(pretrained=True)
     elif args.model_name == "vgg16":
-        from torchvision.models import vgg16
-        model = vgg16(pretrained=True)
+        from torchvision.models import vgg16_bn
+        model = vgg16_bn(pretrained=True)
     else:
         raise NotImplementedError('%s is not found' % args.model_name)
-
+    
+    old_outputs = torch.zeros(0)
+    all_names = []
     model.eval()
     with torch.no_grad():
-        for data, _ in train_loader:
+        for names, data, _ in train_loader:
             data = data.to(device)
-            old_outputs = model(data)
-    return old_outputs
+            batch_old_outputs = model(data)
+            old_outputs =  torch.cat((old_outputs, batch_old_outputs)) if len(old_outputs) else batch_old_outputs
+            all_names.extend(names.numpy())
+    old_output_map = {name: old_probs for name, old_probs in zip(all_names, old_outputs)}
+    return old_output_map
 
 def warmup(model, train_loader, optimizer, criterion, warmup_epochs):
     model.warmup()
@@ -79,6 +85,9 @@ def warmup(model, train_loader, optimizer, criterion, warmup_epochs):
                 epoch_val_accuracy += acc / len(val_loader)
                 epoch_val_loss += val_loss / len(val_loader)
         print(f"Warmup epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
+        with open(os.path.join(checkpoint_dir, "training_log.txt"), "w") as f:
+            f.write(f"Warmup epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
+    
     return model, optimizer
 
 def select_training_strategy(model, train_method):
@@ -94,39 +103,67 @@ def select_training_strategy(model, train_method):
         raise NotImplementedError("Choose valid training method")
     return model   
 
-def train(model, train_loader, criterion, optimizer, prev_outputs):
+def train(model, train_loader, criterion, optimizer):
     model.train()
-    for data, label in tqdm(train_loader):
-        data = data.to(device)
-        label = label.to(device)
+    if model.strategy == "lwf":
+        for data, label, old_outputs in tqdm(train_loader):
+            data = data.to(device)
+            label = label.to(device)
 
-        output, _ = model(data)
-        loss = criterion(output, label, prev_outputs)
+            output, old_task_output = model(data)
+            loss = criterion(output, label, old_task_output, old_outputs)
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        acc = (output.argmax(dim=1) == label).float().mean()
-        epoch_accuracy += acc / len(train_loader)
-        epoch_loss += loss / len(train_loader)
+            acc = (output.argmax(dim=1) == label).float().mean()
+            epoch_accuracy += acc / len(train_loader)
+            epoch_loss += loss / len(train_loader)
+    else:
+        for data, label in tqdm(train_loader):
+            data = data.to(device)
+            label = label.to(device)
+
+            output, _ = model(data)
+            loss = criterion(output, label)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            acc = (output.argmax(dim=1) == label).float().mean()
+            epoch_accuracy += acc / len(train_loader)
+            epoch_loss += loss / len(train_loader)
     return model, optimizer, epoch_accuracy, epoch_loss
 
-def evaluation(model, val_loader, criterion, prev_outputs):    
+def evaluation(model, val_loader, criterion):    
     model.eval()
     with torch.no_grad():
         epoch_val_accuracy = 0
         epoch_val_loss = 0
-        for data, label in val_loader:
-            data = data.to(device)
-            label = label.to(device)
+        if model.strategy == "lwf":
+            for data, label, old_outputs in val_loader:
+                data = data.to(device)
+                label = label.to(device)
 
-            val_output = model(data)
-            val_loss = criterion(val_output, label, prev_outputs)
+                val_output, val_old_task_output = model(data)
+                val_loss = criterion(val_output, label, val_old_task_output, old_outputs)
 
-            acc = (val_output.argmax(dim=1) == label).float().mean()
-            epoch_val_accuracy += acc / len(val_loader)
-            epoch_val_loss += val_loss / len(val_loader)
+                acc = (val_output.argmax(dim=1) == label).float().mean()
+                epoch_val_accuracy += acc / len(val_loader)
+                epoch_val_loss += val_loss / len(val_loader)
+        else:
+            for data, label in val_loader:
+                data = data.to(device)
+                label = label.to(device)
+
+                val_output = model(data)
+                val_loss = criterion(val_output, label)
+
+                acc = (val_output.argmax(dim=1) == label).float().mean()
+                epoch_val_accuracy += acc / len(val_loader)
+                epoch_val_loss += val_loss / len(val_loader)
     return epoch_val_accuracy, epoch_val_loss, epoch_val_loss
 
 
@@ -146,9 +183,11 @@ parser.add_argument('--epochs', type=int, default=100, help='# of epochs in trai
 parser.add_argument('--warmup_epochs', type=int, default=2, help='# of epochs in warmup step')
 parser.add_argument('--weight_decay', type=int, default=5e-4, help='Coefficient of weight decay for optimizer')
 parser.add_argument('--train_method', type=str, default="lwf", choices=["lwf", "finetune", "featext", "finetune_fc"], help='training strategy for new model')
+parser.add_argument('--pretrained', action='store_true', help='Imagenet pretrained or not')
 
 # for setting inputs
 parser.add_argument('--dataset_dir', type=str, default='./data/mnist/') 
+parser.add_argument('--num_classes', type=int, required=True) 
 
 # for displays
 parser.add_argument('--save_epoch_freq', type=int, default=10, help='frequency of saving checkpoints at the end of epochs')    
@@ -173,16 +212,16 @@ seed_everything(args.seed)
 is_multigpu = "0" in args.gpu_ids and "1" in args.gpu_ids
 
 if args.dataset == 'mnist':
-    train_dataset = MnistDataset(args.dataset_dir, phase="train")
-    val_dataset = MnistDataset(args.dataset_dir, phase="val")
+    train_dataset = MnistDataset(root=args.dataset_dir, phase="train")
+    val_dataset = MnistDataset(root=args.dataset_dir, phase="val")
 
 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
 val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers//2, pin_memory=True)
 
 if args.model_name == "alexnet":
-    model = Alexnet(train_method=args.train_method)
+    model = Alexnet(pretrained=args.pretrained, num_new_classes=args.num_classes)
 elif args.model_name == "vgg16":
-    model = Vggnet(train_method=args.train_method)
+    model = Vggnet(pretrained=args.pretrained, num_new_classes=args.num_classes)
 else:
     raise NotImplementedError('%s is not found' % args.model_name)
 
@@ -193,16 +232,20 @@ else:
     device = f'cuda:{args.gpu_ids}'
 model.to(device)
 
-# loss function & optimizers
-# TODO: Implement KDLoss (knowledge distillation) in loss.py
-criterion = TotalLoss(strategy=args.train_method, temp=args.temp)
+# Loss function
+criterion = TotalLoss(strategy=args.train_method, temp=args.temp, num_new_classes=args.num_new_classes)
 
+# Optimizer selection
 if args.optimizer_type == "sgd":
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
 elif args.optimizer_type == "adam":
     optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(args.beta1, 0.9), weight_decay=args.weight_decay)
 else:
     raise NotImplementedError("choose adam or sgd")
+
+if args.train_method == "lwf" or "finetune" in args.train_method:
+    for g in optim.param_groups:
+        g['lr'] = g['lr'] * 0.02
 
 init_epoch = 0
 if args.load_from != "":
@@ -213,12 +256,14 @@ if args.load_from != "":
     criterion = checkpoint['criterion']
 
 if args.train_method == "lwf":
-    # Warm-up for fully connected layers of new task
-    prev_outputs = _compute_output_of_old_tasks(args.model_name, train_loader)
+    # Get outputs of new data from pretrained network on old tasks
+    train_dataset.obtain_old_outputs = True
+    old_output_map = _compute_output_of_old_tasks(args.model_name, train_loader)
+    train_dataset.old_output_map = old_output_map
+    train_dataset.obtain_old_outputs = False
     # Warm-up for fully connected layers of new task
     model = warmup(model, train_loader, optimizer, criterion, args.warmup_epochs)
-else:
-    prev_outputs = None
+
 # Choose training strategy
 model = select_training_strategy(model, args.train_method)
 
@@ -226,10 +271,12 @@ for epoch in range(init_epoch, init_epoch + args.epochs):
     epoch_loss = 0
     epoch_accuracy = 0
 
-    model, optimizer, epoch_accuracy, epoch_loss = train(model, train_loader, criterion, optimizer, prev_outputs)
-    epoch_val_accuracy, epoch_val_loss, epoch_val_loss = evaluation(model, val_loader, criterion, prev_outputs)
-    print(f"Epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
+    model, optimizer, epoch_accuracy, epoch_loss = train(model, train_loader, criterion, optimizer)
+    epoch_val_accuracy, epoch_val_loss, epoch_val_loss = evaluation(model, val_loader, criterion)
 
+    print(f"Epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
+    with open(os.path.join(checkpoint_dir, "training_log.txt"), "w") as f:
+        f.write(f"Epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
     if epoch % args.save_epoch_freq == 0 and epoch:
         torch.save({
                     'epoch': epoch,
