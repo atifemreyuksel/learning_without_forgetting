@@ -1,3 +1,4 @@
+import torch
 from torch import nn
 from torch.nn import functional as F
 
@@ -6,7 +7,9 @@ class KDLoss():
         self.temp = temp
     
     def __call__(self, preds, gts):
+        preds = torch.pow(preds, 1./self.temp)
         l_preds = F.log_softmax(preds, dim=-1)
+        gts = torch.pow(gts, 1./self.temp)
         l_gts = F.log_softmax(gts, dim=-1)
         loss = F.nll_loss(l_preds, l_gts)
         return loss
