@@ -1,64 +1,27 @@
 import torch
-import numpy as np
 from torch import nn
-import torch.nn.functional as F
 from torchvision.models import alexnet
+from models.base_model import BaseModel
 
-class Alexnet(nn.Module):
-    def __init__(self, pretrained=True):
+class Alexnet(BaseModel):
+    def __init__(self, pretrained=True, num_new_classes=10):
         super().__init__()
         base_alexnet = alexnet(pretrained=pretrained)
-        self.shared_cnn_layers = None
-        self.shared_fc_layers = None
-        self.old_layers = None
-        self.new_layers = None
+        self.shared_cnn_layers = base_alexnet.features
+        self.adap_avg_pool = base_alexnet.avgpool
+        self.shared_fc_layers = base_alexnet.classifier[:6]
+        self.old_layers = base_alexnet.classifier[6:]
+        self.new_layers = nn.Linear(self.old_layers[0].in_features, num_new_classes)
 
-    def freeze(self, block="shared"):
-        if block == "shared_cnn":
-            for param in self.shared_cnn_layers.parameters():
-                param.requires_grad = False
-        if block == "shared_fc":
-            for param in self.shared_fc_layers.parameters():
-                param.requires_grad = False
-        if block == "old":
-            for param in self.old_layers.parameters():
-                param.requires_grad = False
-
-    def unfreeze(self, block="shared"):
-        if block == "shared_cnn":
-            for param in self.shared_cnn_layers.parameters():
-                param.requires_grad = True
-        if block == "shared_fc":
-            for param in self.shared_fc_layers.parameters():
-                param.requires_grad = True
-        if block == "old":
-            for param in self.old_layers.parameters():
-                param.requires_grad = True
-
-    def warmup(self):
-        self.freeze(block="shared_cnn")
-        self.freeze(block="shared_fc")
-        self.freeze(block="old")
-
-    def featext(self):
-        self.freeze(block="shared_cnn")
-        self.freeze(block="shared_fc")
-        self.freeze(block="old")
-
-    def finetune(self):
-        self.unfreeze(block="shared_cnn")
-        self.unfreeze(block="shared_fc")
-        self.unfreeze(block="old")
-
-    def lwf(self):
-        self.unfreeze(block="shared_cnn")
-        self.unfreeze(block="shared_fc")
-        self.unfreeze(block="old")
-
-    def finetune_fc(self):
-        self.freeze(block="shared_cnn")
-        self.unfreeze(block="shared_fc")
-        self.unfreeze(block="old")
-
-    def forward(self, input):
-        pass
+    def forward(self, _input):
+        cnn_out = self.shared_cnn_layers(_input)
+        cnn_out = self.adap_avg_pool(cnn_out)
+        shared_fc_out = self.shared_fc_layers(cnn_out)
+        # Old task branch
+        old_task_outputs = self.old_layers(shared_fc_out)
+        old_outputs = self.softmax(old_task_outputs)
+        # New task branch
+        new_task_outputs = self.new_layers(shared_fc_out)
+        outputs = torch.cat((old_task_outputs, new_task_outputs), dim=1)
+        outputs = self.softmax(outputs)
+        return outputs, old_outputs
