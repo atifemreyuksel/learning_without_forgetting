@@ -3,20 +3,24 @@ import numpy as np
 from glob import glob
 from PIL import Image
 import torch.utils.data as data
+import torchvision.transforms import transforms
 
 class MnistDataset(data.Dataset):
-    def __init__(self, root="data/MNIST", phase="train", transform=None, old_output_map={}):
+    def __init__(self, root="data/MNIST", phase="train", imsize=128, old_output_map={}):
         super(MnistDataset, self).__init__()
         self.phase = phase
-        self.transform = transform
         self.obtain_old_outputs = False
-        if self.phase == "train" or self.phase == "val":
-            self.images = glob(os.path.join(root, "training", "*", "*.png"))
-        else:
-            self.images = glob(os.path.join(root, "testing", "*", "*.png"))
-        #self.images = [os.path.join(root, image) for image in open(os.path.join(root, f"mnist_{phase}.txt")).read().splitlines()]
+        self.transform = transforms.Compose(
+                    [
+                        transforms.Resize((imsize, imsize)),
+                        transforms.ToTensor(),
+                        transforms.Normalize((0.5,), (1.0,))
+                    ]
+                )  
+
+        self.images = [os.path.join(root, image) for image in open(os.path.join(root, f"mnist_{self.phase}.txt")).read().splitlines()]
         self.targets = [int(img.split('/')[-2]) for img in self.images] 
-        self.names = [img.split('/')[-1].replace('.png', '') for img in self.images] 
+        self.names = [img.split('/')[-1].replace('.png', '') for img in self.images]
         self.old_output_map = old_output_map
         
     def __getitem__(self, index):
