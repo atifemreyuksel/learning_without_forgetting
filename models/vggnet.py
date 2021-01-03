@@ -19,9 +19,7 @@ class Vggnet(BaseModel):
         shared_fc_out = self.shared_fc_layers(cnn_out)
         # Old task branch
         old_task_outputs = self.old_layers(shared_fc_out)
-        old_outputs = self.softmax(old_task_outputs)
         # New task branch
         new_task_outputs = self.new_layers(shared_fc_out)
         outputs = torch.cat((old_task_outputs, new_task_outputs), dim=1)
-        outputs = self.softmax(outputs)
-        return outputs, old_outputs
+        return outputs, old_task_outputs
