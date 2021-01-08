@@ -48,7 +48,7 @@ def _compute_output_of_old_tasks(init_model_name, train_loader):
     old_output_map = {name: old_probs for name, old_probs in zip(all_names, old_outputs)}
     return old_output_map
 
-def warmup(model, train_loader, optimizer, criterion, warmup_epochs):
+def warmup(model, train_loader, optimizer, criterion, warmup_epochs, num_new_classes):
     model.warmup()
     for epoch in range(warmup_epochs):
         epoch_loss = 0
@@ -66,7 +66,7 @@ def warmup(model, train_loader, optimizer, criterion, warmup_epochs):
             loss.backward()
             optimizer.step()
 
-            acc = (output.argmax(dim=1) == label).float().mean()
+            acc = (output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
             epoch_accuracy += acc / len(train_loader)
             epoch_loss += loss / len(train_loader)
         
@@ -81,7 +81,7 @@ def warmup(model, train_loader, optimizer, criterion, warmup_epochs):
                 val_output = model(data)
                 val_loss = criterion(output, label, is_warmup=True)
 
-                acc = (val_output.argmax(dim=1) == label).float().mean()
+                acc = (val_output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
                 epoch_val_accuracy += acc / len(val_loader)
                 epoch_val_loss += val_loss / len(val_loader)
         print(f"Warmup epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
@@ -103,7 +103,7 @@ def select_training_strategy(model, train_method):
         raise NotImplementedError("Choose valid training method")
     return model   
 
-def train(model, train_loader, criterion, optimizer):
+def train(model, train_loader, criterion, optimizer, num_new_classes):
     model.train()
     if model.strategy == "lwf":
         for data, label, old_outputs in tqdm(train_loader):
@@ -117,7 +117,7 @@ def train(model, train_loader, criterion, optimizer):
             loss.backward()
             optimizer.step()
 
-            acc = (output.argmax(dim=1) == label).float().mean()
+            acc = (output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
             epoch_accuracy += acc / len(train_loader)
             epoch_loss += loss / len(train_loader)
     else:
@@ -132,12 +132,12 @@ def train(model, train_loader, criterion, optimizer):
             loss.backward()
             optimizer.step()
 
-            acc = (output.argmax(dim=1) == label).float().mean()
+            acc = (output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
             epoch_accuracy += acc / len(train_loader)
             epoch_loss += loss / len(train_loader)
     return model, optimizer, epoch_accuracy, epoch_loss
 
-def evaluation(model, val_loader, criterion):    
+def evaluation(model, val_loader, criterion, num_new_classes):    
     model.eval()
     with torch.no_grad():
         epoch_val_accuracy = 0
@@ -150,7 +150,7 @@ def evaluation(model, val_loader, criterion):
                 val_output, val_old_task_output = model(data)
                 val_loss = criterion(val_output, label, val_old_task_output, old_outputs)
 
-                acc = (val_output.argmax(dim=1) == label).float().mean()
+                acc = (val_output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
                 epoch_val_accuracy += acc / len(val_loader)
                 epoch_val_loss += val_loss / len(val_loader)
         else:
@@ -161,7 +161,7 @@ def evaluation(model, val_loader, criterion):
                 val_output = model(data)
                 val_loss = criterion(val_output, label)
 
-                acc = (val_output.argmax(dim=1) == label).float().mean()
+                acc = (val_output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
                 epoch_val_accuracy += acc / len(val_loader)
                 epoch_val_loss += val_loss / len(val_loader)
     return epoch_val_accuracy, epoch_val_loss, epoch_val_loss
@@ -210,6 +210,7 @@ json.dump(vars(args), open(config_file, 'w'))
 
 seed_everything(args.seed)
 is_multigpu = "0" in args.gpu_ids and "1" in args.gpu_ids
+num_new_classes = args.num_classes
 
 if args.dataset == 'mnist':
     train_dataset = MnistDataset(root=args.dataset_dir, phase="train")
@@ -219,9 +220,9 @@ train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_
 val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers//2, pin_memory=True)
 
 if args.model_name == "alexnet":
-    model = Alexnet(pretrained=args.pretrained, num_new_classes=args.num_classes)
+    model = Alexnet(pretrained=args.pretrained, num_new_classes=num_new_classes)
 elif args.model_name == "vgg16":
-    model = Vggnet(pretrained=args.pretrained, num_new_classes=args.num_classes)
+    model = Vggnet(pretrained=args.pretrained, num_new_classes=num_new_classes)
 else:
     raise NotImplementedError('%s is not found' % args.model_name)
 
@@ -262,7 +263,7 @@ if args.train_method == "lwf":
     train_dataset.old_output_map = old_output_map
     train_dataset.obtain_old_outputs = False
     # Warm-up for fully connected layers of new task
-    model = warmup(model, train_loader, optimizer, criterion, args.warmup_epochs)
+    model = warmup(model, train_loader, optimizer, criterion, args.warmup_epochs, num_new_classes)
 
 # Choose training strategy
 model = select_training_strategy(model, args.train_method)
@@ -271,8 +272,8 @@ for epoch in range(init_epoch, init_epoch + args.epochs):
     epoch_loss = 0
     epoch_accuracy = 0
 
-    model, optimizer, epoch_accuracy, epoch_loss = train(model, train_loader, criterion, optimizer)
-    epoch_val_accuracy, epoch_val_loss, epoch_val_loss = evaluation(model, val_loader, criterion)
+    model, optimizer, epoch_accuracy, epoch_loss = train(model, train_loader, criterion, optimizer, num_new_classes)
+    epoch_val_accuracy, epoch_val_loss, epoch_val_loss = evaluation(model, val_loader, criterion, num_new_classes)
 
     print(f"Epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
     with open(os.path.join(checkpoint_dir, "training_log.txt"), "w") as f:
