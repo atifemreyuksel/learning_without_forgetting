@@ -78,8 +78,8 @@ def warmup(model, train_loader, optimizer, criterion, warmup_epochs, num_new_cla
                 data = data.to(device)
                 label = label.to(device)
 
-                val_output = model(data)
-                val_loss = criterion(output, label, is_warmup=True)
+                val_output, _ = model(data)
+                val_loss = criterion(val_output, label, is_warmup=True)
 
                 acc = (val_output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
                 epoch_val_accuracy += acc / len(val_loader)
