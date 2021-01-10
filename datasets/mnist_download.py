@@ -8,15 +8,15 @@ from os import path
 import png
 
 # source: http://abel.ee.ucla.edu/cvxopt/_downloads/mnist.py
-def read(dataset = "training", path = "."):
-    if dataset is "training":
+def read(dataset = "train", path = "."):
+    if dataset == "train":
         fname_img = os.path.join(path, 'train-images-idx3-ubyte')
         fname_lbl = os.path.join(path, 'train-labels-idx1-ubyte')
-    elif dataset is "testing":
+    elif dataset == "test":
         fname_img = os.path.join(path, 't10k-images-idx3-ubyte')
         fname_lbl = os.path.join(path, 't10k-labels-idx1-ubyte')
     else:
-        raise ValueError("dataset must be 'testing' or 'training'")
+        raise ValueError("dataset must be 'test' or 'train'")
 
     flbl = open(fname_lbl, 'rb')
     magic_nr, size = struct.unpack(">II", flbl.read(8))
@@ -40,9 +40,13 @@ def write_dataset(labels, data, size, rows, cols, output_dir):
         if not path.exists(dir):
             os.makedirs(dir)
 
+    path_list = []
+    txt_file = "{}.txt".format(output_dir)
+    
     # write data
     for (i, label) in enumerate(labels):
         output_filename = path.join(output_dirs[label], str(i) + ".png")
+        path_list.append(output_filename)
         with open(output_filename, "wb") as h:
             w = png.Writer(cols, rows, greyscale=True)
             data_i = [
@@ -50,6 +54,11 @@ def write_dataset(labels, data, size, rows, cols, output_dir):
                 for j in range(rows)
             ]
             w.write(h, data_i)
+    
+    with open(txt_file, 'w') as pl:
+        for p in path_list:
+            pl.write(p+'\n')
+    
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
@@ -59,7 +68,7 @@ if __name__ == "__main__":
     input_path = sys.argv[1]
     output_path = sys.argv[2]
 
-    for dataset in ["training", "testing"]:
+    for dataset in ["train", "test"]:
         labels, data, size, rows, cols = read(dataset, input_path)
         write_dataset(labels, data, size, rows, cols,
                       path.join(output_path, dataset))
