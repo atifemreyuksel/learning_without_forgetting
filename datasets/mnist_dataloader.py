@@ -3,7 +3,7 @@ import numpy as np
 from glob import glob
 from PIL import Image
 import torch.utils.data as data
-import torchvision.transforms import transforms
+from torchvision.transforms import transforms
 
 class MnistDataset(data.Dataset):
     def __init__(self, root="data/MNIST", phase="train", imsize=128, old_output_map={}):
@@ -18,7 +18,8 @@ class MnistDataset(data.Dataset):
                     ]
                 )  
 
-        self.images = [os.path.join(root, image) for image in open(os.path.join(root, f"mnist_{self.phase}.txt")).read().splitlines()]
+        self.images = [os.path.join(root, image) for image in open(os.path.join(root, f"{self.phase}.txt")).read().splitlines()]
+        print(self.images)
         self.targets = [int(img.split('/')[-2]) for img in self.images] 
         self.names = [img.split('/')[-1].replace('.png', '') for img in self.images]
         self.old_output_map = old_output_map
