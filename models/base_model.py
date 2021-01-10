@@ -1,9 +1,5 @@
 import torch
-import numpy as np
 from torch import nn
-import torch.nn.functional as F
-from torchvision.models import vgg16
-from models.base_model import BaseModel
 from abc import abstractmethod
 
 class BaseModel(nn.Module):

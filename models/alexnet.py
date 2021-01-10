@@ -12,11 +12,12 @@ class Alexnet(BaseModel):
         self.shared_fc_layers = base_alexnet.classifier[:6]
         self.old_layers = base_alexnet.classifier[6:]
         self.new_layers = nn.Linear(self.old_layers[0].in_features, num_new_classes)
-
+        
     def forward(self, _input):
         cnn_out = self.shared_cnn_layers(_input)
         cnn_out = self.adap_avg_pool(cnn_out)
-        shared_fc_out = self.shared_fc_layers(cnn_out)
+        cnn_out_flatten = cnn_out.contiguous().view(cnn_out.size()[0], -1)
+        shared_fc_out = self.shared_fc_layers(cnn_out_flatten)
         # Old task branch
         old_task_outputs = self.old_layers(shared_fc_out)
         # New task branch

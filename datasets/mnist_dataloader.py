@@ -3,10 +3,10 @@ import numpy as np
 from glob import glob
 from PIL import Image
 import torch.utils.data as data
-import torchvision.transforms import transforms
+from torchvision.transforms import transforms
 
 class MnistDataset(data.Dataset):
-    def __init__(self, root="data/MNIST", phase="train", imsize=128, old_output_map={}):
+    def __init__(self, root="data/MNIST", phase="train", imsize=256, old_output_map={}):
         super(MnistDataset, self).__init__()
         self.phase = phase
         self.obtain_old_outputs = False
@@ -26,7 +26,7 @@ class MnistDataset(data.Dataset):
     def __getitem__(self, index):
         img, target = self.images[index], self.targets[index]
         img_name = self.names[index]
-        img = Image.open(img)
+        img = Image.open(img).convert('RGB')
         
         if self.transform is not None:
             img = self.transform(img)

@@ -130,3 +130,5 @@ dmypy.json
 
 # Repo spesifics
 data/*
+checkpoints/
+notebooks/
