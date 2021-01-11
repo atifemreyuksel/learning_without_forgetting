@@ -5,15 +5,18 @@ from torch.nn import functional as F
 class KDLoss():
     def __init__(self, temp=2):
         self.temp = temp
-    
+        self.log_sotfmax = nn.LogSoftmax(dim=-1)
+
     def __call__(self, preds, gts):
         preds = F.softmax(preds, dim=-1)
         preds = torch.pow(preds, 1./self.temp)
-        l_preds = F.softmax(preds, dim=-1)
-        
+        #l_preds = F.softmax(preds, dim=-1)
+        l_preds = self.log_sotfmax(preds)
+
         gts = F.softmax(gts, dim=-1)
         gts = torch.pow(gts, 1./self.temp)
-        l_gts = F.softmax(gts, dim=-1)
+        #l_gts = F.softmax(gts, dim=-1)
+        l_gts = self.log_sotfmax(gts)
 
         l_preds = torch.log(l_preds)
         l_preds[l_preds != l_preds] = 0.
