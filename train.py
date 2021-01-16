@@ -15,7 +15,10 @@ from models.alexnet import Alexnet
 from models.vggnet import Vggnet
 from loss import TotalLoss
 from datasets.mnist_dataloader import MnistDataset
+from datasets.imagenet_dataloader import ImagenetDataset
 from torchvision.transforms import transforms
+
+# Example command: python train.py --name test_mnist_eval_old --gpu_ids 1 --batch_size 32 --pretrained --dataset_dir data/MNIST --num_classes 10 --imsize 128 --eval_old_task
 
 def seed_everything(seed):
     random.seed(seed)
@@ -59,14 +62,24 @@ def _compute_output_of_old_tasks(init_model_name, loader):
     torch.cuda.empty_cache()
     return old_output_map
 
-def warmup(model, train_loader, optimizer, criterion, warmup_epochs, num_new_classes):
+def eval_old_task(model, val_loader, num_new_classes):
+    epoch_val_accuracy = 0
+    for data, label in val_loader:
+        data = data.to(device)
+        label = label.to(device)
+        val_output, _ = model(data)
+        acc = (val_output[:, :-num_new_classes].argmax(dim=1) == label).float().mean()
+        epoch_val_accuracy += acc / len(val_loader)
+    return epoch_val_accuracy
+
+def warmup(model, train_loader, optimizer, criterion, warmup_epochs, num_new_classes, val_loader_old):
     model.warmup()
     
     for epoch in range(warmup_epochs):
         epoch_loss = 0
         epoch_accuracy = 0
 
-        model.train()    
+        model.train()   
         for data, label, _ in tqdm(train_loader):
             data = data.to(device)
             label = label.to(device)
@@ -95,10 +108,16 @@ def warmup(model, train_loader, optimizer, criterion, warmup_epochs, num_new_cla
                 acc = (val_output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
                 epoch_val_accuracy += acc / len(val_loader)
                 epoch_val_loss += val_loss / len(val_loader)
-        print(f"Warmup epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
-        with open(os.path.join(checkpoint_dir, "training_log.txt"), "a") as f:
-            f.write(f"Warmup epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
-    
+
+            if val_loader_old != None:
+                epoch_val_accuracy_old = eval_old_task(model, val_loader_old, num_new_classes)
+                print(f"Warmup epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f} - old_val_acc: {epoch_val_accuracy_old:.4f}\n")
+                with open(os.path.join(checkpoint_dir, f"training_log_{training_uid}.txt"), "a") as f:
+                    f.write(f"Warmup epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f} - old_val_acc: {epoch_val_accuracy_old:.4f}\n")
+            else:
+                print(f"Warmup epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
+                with open(os.path.join(checkpoint_dir, f"training_log_{training_uid}.txt"), "a") as f:
+                    f.write(f"Warmup epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
     return model, optimizer
 
 def select_training_strategy(model, train_method):
@@ -153,7 +172,7 @@ def train(model, train_loader, criterion, optimizer, num_new_classes):
             epoch_loss += loss / len(train_loader)
     return model, optimizer, epoch_accuracy, epoch_loss
 
-def evaluation(model, val_loader, criterion, num_new_classes):    
+def evaluation(model, val_loader, criterion, num_new_classes, val_loader_old=None):    
     epoch_val_loss = 0
     epoch_val_accuracy = 0
 
@@ -178,13 +197,20 @@ def evaluation(model, val_loader, criterion, num_new_classes):
                 data = data.to(device)
                 label = label.to(device)
 
-                val_output = model(data)
+                val_output, _ = model(data)
                 val_loss = criterion(val_output, label)
 
                 acc = (val_output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
                 epoch_val_accuracy += acc / len(val_loader)
                 epoch_val_loss += val_loss / len(val_loader)
-    return epoch_val_accuracy, epoch_val_loss, epoch_val_loss
+
+        if val_loader_old != None:
+            epoch_val_accuracy_old = eval_old_task(model, val_loader_old, num_new_classes)
+
+    if val_loader_old != None:
+        return epoch_val_accuracy, epoch_val_loss, epoch_val_loss, epoch_val_accuracy_old
+    else:    
+        return epoch_val_accuracy, epoch_val_loss, epoch_val_loss
 
 
 parser = argparse.ArgumentParser()
@@ -207,12 +233,15 @@ parser.add_argument('--pretrained', action='store_true', help='Imagenet pretrain
 parser.add_argument('--loss_temp', type=float, default=2, help='temperature of KDLoss')
 
 # for setting inputs
-parser.add_argument('--dataset_dir', type=str, default='./data/mnist/') 
+parser.add_argument('--dataset_dir', type=str, default='./data/mnist/')  
+parser.add_argument('--eval_old_task', action='store_true', help='Evaluate validation accuracy of imagenet or not')
+parser.add_argument('--old_dataset_dir', type=str, default='./data/imagenet/')
 parser.add_argument('--num_classes', type=int, required=True) 
 parser.add_argument('--imsize', type=int, default=256) 
+parser.add_argument('--imsize_old_task', type=int, default=256) 
 
 # for displays
-parser.add_argument('--save_epoch_freq', type=int, default=10, help='frequency of saving checkpoints at the end of epochs')    
+parser.add_argument('--save_epoch_freq', type=int, default=5, help='frequency of saving checkpoints at the end of epochs')    
 
 # model and optimizer
 parser.add_argument('--model_name', type=str, default='alexnet', choices=["vgg16", "alexnet"], help='create model with given name')
@@ -228,7 +257,9 @@ args = parser.parse_args()
 checkpoint_dir = os.path.join(args.checkpoints_dir, args.name)
 os.makedirs(checkpoint_dir, exist_ok=True)
 
-config_file = os.path.join(checkpoint_dir, f'config_{datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]}.json')
+training_uid = datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]
+
+config_file = os.path.join(checkpoint_dir, f'config_{training_uid}.json')
 json.dump(vars(args), open(config_file, 'w'))
 
 seed_everything(args.seed)
@@ -241,6 +272,10 @@ if args.dataset == 'mnist':
 
 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
 val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers//2, pin_memory=True)
+
+if args.eval_old_task:
+    val_dataset_old = ImagenetDataset(root=args.old_dataset_dir, phase="val", imsize=args.imsize_old_task)
+    val_loader_old = torch.utils.data.DataLoader(val_dataset_old, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers//2, pin_memory=True)
 
 if args.model_name == "alexnet":
     model = Alexnet(pretrained=args.pretrained, num_new_classes=num_new_classes)
@@ -284,18 +319,27 @@ if args.train_method == "lwf":
     train_dataset = _get_old_outputs(train_dataset, train_loader, args.model_name)
     val_dataset = _get_old_outputs(val_dataset, val_loader, args.model_name)
     # Warm-up for fully connected layers of new task
-    model, optimizer = warmup(model, train_loader, optimizer, criterion, args.warmup_epochs, num_new_classes)
+    if args.eval_old_task:
+        model, optimizer = warmup(model, train_loader, optimizer, criterion, args.warmup_epochs, num_new_classes, val_loader_old)
+    else:
+        model, optimizer = warmup(model, train_loader, optimizer, criterion, args.warmup_epochs, num_new_classes)
 
 # Choose training strategy
 model = select_training_strategy(model, args.train_method)
 
 for epoch in range(init_epoch, init_epoch + args.epochs):
     model, optimizer, epoch_accuracy, epoch_loss = train(model, train_loader, criterion, optimizer, num_new_classes)
-    epoch_val_accuracy, epoch_val_loss, epoch_val_loss = evaluation(model, val_loader, criterion, num_new_classes)
-
-    print(f"Epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
-    with open(os.path.join(checkpoint_dir, "training_log.txt"), "a") as f:
-        f.write(f"Epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
+    
+    if args.eval_old_task:
+        epoch_val_accuracy, epoch_val_loss, epoch_val_loss, epoch_val_accuracy_old = evaluation(model, val_loader, criterion, num_new_classes, val_loader_old)
+        print(f"Epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f} - old_val_acc: {epoch_val_accuracy_old:.4f}\n")
+        with open(os.path.join(checkpoint_dir, f"training_log_{training_uid}.txt"), "a") as f:
+            f.write(f"Epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f} - old_val_acc: {epoch_val_accuracy_old:.4f}\n")
+    else:
+        epoch_val_accuracy, epoch_val_loss, epoch_val_loss = evaluation(model, val_loader, criterion, num_new_classes)
+        print(f"Epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
+        with open(os.path.join(checkpoint_dir, f"training_log_{training_uid}.txt"), "a") as f:
+            f.write(f"Epoch : {epoch+1} - loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} - val_loss : {epoch_val_loss:.4f} - val_acc: {epoch_val_accuracy:.4f}\n")
     if epoch % args.save_epoch_freq == 0 and epoch:
         torch.save({
                     'epoch': epoch,
