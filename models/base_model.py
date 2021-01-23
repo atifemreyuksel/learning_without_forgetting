@@ -41,7 +41,7 @@ class BaseModel(nn.Module):
     def finetune(self):
         self.unfreeze(block="shared_cnn")
         self.unfreeze(block="shared_fc")
-        self.unfreeze(block="old")
+        self.freeze(block="old")
 
     def lwf(self):
         self.unfreeze(block="shared_cnn")
@@ -51,7 +51,7 @@ class BaseModel(nn.Module):
     def finetune_fc(self):
         self.freeze(block="shared_cnn")
         self.unfreeze(block="shared_fc")
-        self.unfreeze(block="old")
+        self.freeze(block="old")
 
     @abstractmethod
     def forward(self, _input):

@@ -257,7 +257,7 @@ args = parser.parse_args()
 checkpoint_dir = os.path.join(args.checkpoints_dir, args.name)
 os.makedirs(checkpoint_dir, exist_ok=True)
 
-training_uid = datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]
+training_uid = "{}_{}_{}".format(args.train_method, args.dataset, datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3])
 
 config_file = os.path.join(checkpoint_dir, f'config_{training_uid}.json')
 json.dump(vars(args), open(config_file, 'w'))
