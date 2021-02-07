@@ -48,6 +48,11 @@ class BaseModel(nn.Module):
         self.unfreeze(block="shared_fc")
         self.unfreeze(block="old")
 
+    def lwf_eq_prob(self):
+        self.unfreeze(block="shared_cnn")
+        self.unfreeze(block="shared_fc")
+        self.unfreeze(block="old")
+
     def finetune_fc(self):
         self.freeze(block="shared_cnn")
         self.unfreeze(block="shared_fc")

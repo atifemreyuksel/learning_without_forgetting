@@ -72,7 +72,7 @@ def eval_old_task(model, val_loader, num_new_classes):
         epoch_val_accuracy += acc / len(val_loader)
     return epoch_val_accuracy
 
-def warmup(model, train_loader, optimizer, criterion, warmup_epochs, num_new_classes, val_loader_old):
+def warmup(model, train_loader, optimizer, criterion, warmup_epochs, num_new_classes, val_loader_old=None):
     model.warmup()
     
     for epoch in range(warmup_epochs):
@@ -129,6 +129,8 @@ def select_training_strategy(model, train_method):
         model.finetune_fc()
     elif train_method == "lwf":
         model.lwf()
+    elif train_method == "lwf_eq_prob":
+        model.lwf_eq_prob()
     else:
         raise NotImplementedError("Choose valid training method")
     model.strategy = train_method
@@ -139,7 +141,7 @@ def train(model, train_loader, criterion, optimizer, num_new_classes):
     epoch_accuracy = 0
 
     model.train()
-    if model.strategy == "lwf":
+    if model.strategy == "lwf" or model.strategy == "lwf_eq_prob":
         for data, label, old_outputs in tqdm(train_loader):
             data = data.to(device)
             label = label.to(device)
@@ -180,7 +182,7 @@ def evaluation(model, val_loader, criterion, num_new_classes, val_loader_old=Non
     with torch.no_grad():
         epoch_val_accuracy = 0
         epoch_val_loss = 0
-        if model.strategy == "lwf":
+        if model.strategy == "lwf" or model.strategy == "lwf_eq_prob":
             for data, label, old_outputs in val_loader:
                 data = data.to(device)
                 label = label.to(device)
@@ -228,7 +230,7 @@ parser.add_argument('--num_workers', type=int, default=16, help='num workers for
 parser.add_argument('--epochs', type=int, default=100, help='# of epochs in training')
 parser.add_argument('--warmup_epochs', type=int, default=2, help='# of epochs in warmup step')
 parser.add_argument('--weight_decay', type=int, default=5e-4, help='Coefficient of weight decay for optimizer')
-parser.add_argument('--train_method', type=str, default="lwf", choices=["lwf", "finetune", "featext", "finetune_fc"], help='training strategy for new model')
+parser.add_argument('--train_method', type=str, default="lwf", choices=["lwf", "finetune", "featext", "finetune_fc", "lwf_eq_prob"], help='training strategy for new model')
 parser.add_argument('--pretrained', action='store_true', help='Imagenet pretrained or not')
 parser.add_argument('--loss_temp', type=float, default=2, help='temperature of KDLoss')
 
@@ -302,7 +304,7 @@ elif args.optimizer_type == "adam":
 else:
     raise NotImplementedError("choose adam or sgd")
 
-if args.train_method == "lwf" or "finetune" in args.train_method:
+if args.train_method.startswith('lwf') or "finetune" in args.train_method:
     for g in optimizer.param_groups:
         g['lr'] = g['lr'] * 0.02
 
@@ -314,7 +316,7 @@ if args.load_from != "":
     init_epoch = checkpoint['epoch']
     criterion = checkpoint['criterion']
 
-if args.train_method == "lwf":
+if args.train_method.startswith('lwf'):
     # Get outputs of new data from pretrained network on old tasks
     train_dataset = _get_old_outputs(train_dataset, train_loader, args.model_name)
     val_dataset = _get_old_outputs(val_dataset, val_loader, args.model_name)

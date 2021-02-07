@@ -7,17 +7,23 @@ class KDLoss():
         self.temp = temp
         self.log_sotfmax = nn.LogSoftmax(dim=-1)
 
-    def __call__(self, preds, gts):
+    def __call__(self, preds, gts, strategy):
         preds = F.softmax(preds, dim=-1)
         preds = torch.pow(preds, 1./self.temp)
         #l_preds = F.softmax(preds, dim=-1)
         l_preds = self.log_sotfmax(preds)
 
-        gts = F.softmax(gts, dim=-1)
-        gts = torch.pow(gts, 1./self.temp)
-        #l_gts = F.softmax(gts, dim=-1)
-        l_gts = self.log_sotfmax(gts)
-
+        if strategy == "lwf":
+            gts = F.softmax(gts, dim=-1)
+            gts = torch.pow(gts, 1./self.temp)
+            l_gts = self.log_sotfmax(gts)
+        
+        elif strategy == "lwf_eq_prob":
+            eq_prob = 1. / gts.size()[1]
+            gts = torch.zeros_like(gts) + eq_prob.float()[:, None]
+            gts = torch.pow(gts, 1./self.temp)
+            l_gts = self.log_sotfmax(gts)
+            
         l_preds = torch.log(l_preds)
         l_preds[l_preds != l_preds] = 0.
         loss = torch.mean(torch.sum(-l_gts * l_preds, axis=1))
@@ -33,9 +39,9 @@ class TotalLoss():
 
     def __call__(self, preds, gts, old_preds=None, old_gts=None, is_warmup=False):
         preds_old, preds_new = preds[:, :-self.num_new_classes], preds[:, -self.num_new_classes:]
-        if self.strategy == "lwf":
+        if self.strategy == "lwf" or self.strategy == "lwf_eq_prob":
             if not is_warmup:
-                old_task_loss = self.kd_loss(preds_old, old_gts)
+                old_task_loss = self.kd_loss(preds_old, old_gts, self.strategy)
             else:
                 old_task_loss = 0.
         else:
