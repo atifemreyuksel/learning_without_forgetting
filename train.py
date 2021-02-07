@@ -243,7 +243,7 @@ parser.add_argument('--imsize', type=int, default=256)
 parser.add_argument('--imsize_old_task', type=int, default=256) 
 
 # for displays
-parser.add_argument('--save_epoch_freq', type=int, default=5, help='frequency of saving checkpoints at the end of epochs')    
+parser.add_argument('--save_epoch_freq', type=int, default=20, help='frequency of saving checkpoints at the end of epochs')    
 
 # model and optimizer
 parser.add_argument('--model_name', type=str, default='alexnet', choices=["vgg16", "alexnet"], help='create model with given name')

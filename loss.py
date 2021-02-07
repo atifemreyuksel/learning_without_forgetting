@@ -20,12 +20,12 @@ class KDLoss():
         
         elif strategy == "lwf_eq_prob":
             eq_prob = 1. / gts.size()[1]
-            gts = torch.zeros_like(gts) + eq_prob.float()[:, None]
+            gts = torch.empty(gts.size(), device=gts.device).fill_(eq_prob)
             gts = torch.pow(gts, 1./self.temp)
             l_gts = self.log_sotfmax(gts)
             
         l_preds = torch.log(l_preds)
-        l_preds[l_preds != l_preds] = 0.
+        l_preds[l_preds != l_preds] = 0. # Eliminate NaN values
         loss = torch.mean(torch.sum(-l_gts * l_preds, axis=1))
         return loss
 
