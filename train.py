@@ -29,6 +29,25 @@ def seed_everything(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
 
+def check_loss(loss, loss_value):
+    loss_valid = True
+    error = ''
+    if loss_value == float("inf") or loss_value == float("-inf"):
+        loss_valid = False
+        error = "WARNING: received an inf loss"
+    elif torch.isnan(loss).sum() > 0:
+        loss_valid = False
+        error = 'WARNING: received a nan loss, setting loss value to 0'
+    elif loss_value < 0:
+        loss_valid = False
+        error = "WARNING: received a negative loss"
+    if error != '':
+        print(error)
+        with open(os.path.join(checkpoint_dir, f"training_log_{training_uid}.txt"), "a") as f:
+            f.write(error)
+    return loss_valid
+
+
 def _get_old_outputs(dataset, loader, model_name):
         dataset.obtain_old_outputs = True
         old_output_map = _compute_output_of_old_tasks(model_name, loader)
@@ -41,8 +60,8 @@ def _compute_output_of_old_tasks(init_model_name, loader):
         from torchvision.models import alexnet
         model = alexnet(pretrained=True)
     elif args.model_name == "vgg16":
-        from torchvision.models import vgg16_bn
-        model = vgg16_bn(pretrained=True)
+        from torchvision.models import vgg16
+        model = vgg16(pretrained=True)
     else:
         raise NotImplementedError('%s is not found' % args.model_name)
     
@@ -87,8 +106,9 @@ def warmup(model, train_loader, optimizer, criterion, warmup_epochs, num_new_cla
             output, _ = model(data)
             loss = criterion(output, label, is_warmup=True)
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            if check_loss(loss, loss.item()):
+                loss.backward()
+                optimizer.step()
 
             acc = (output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
             epoch_accuracy += acc / len(train_loader)
@@ -151,8 +171,9 @@ def train(model, train_loader, criterion, optimizer, num_new_classes):
             loss = criterion(output, label, old_preds=old_task_output, old_gts=old_outputs)
 
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            if check_loss(loss, loss.item()):
+                loss.backward()
+                optimizer.step()
 
             acc = (output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
             epoch_accuracy += acc / len(train_loader)
@@ -166,8 +187,9 @@ def train(model, train_loader, criterion, optimizer, num_new_classes):
             loss = criterion(output, label)
 
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            if check_loss(loss, loss.item()):
+                loss.backward()
+                optimizer.step()
 
             acc = (output[:, -num_new_classes:].argmax(dim=1) == label).float().mean()
             epoch_accuracy += acc / len(train_loader)
@@ -220,7 +242,7 @@ parser = argparse.ArgumentParser()
 # experiment specifics
 parser.add_argument('--name', type=str, default='imagenet2mnist', help='name of the experiment. It decides where to store samples and models')        
 parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
-parser.add_argument('--seed', type=int, default=42)
+parser.add_argument('--seed', type=int, default=47)
 parser.add_argument('--checkpoints_dir', type=str, default='./checkpoints', help='models are saved here')
 parser.add_argument('--dataset', type=str, default='mnist', choices=['mnist'], help='Dataset choice')
 
