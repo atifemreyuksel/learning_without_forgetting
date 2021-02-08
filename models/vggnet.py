@@ -1,12 +1,12 @@
 import torch
 from torch import nn
-from torchvision.models import vgg16_bn
+from torchvision.models import vgg16
 from models.base_model import BaseModel
 
 class Vggnet(BaseModel):
     def __init__(self, pretrained=True, num_new_classes=10):
         super().__init__()
-        base_vgg16 = vgg16_bn(pretrained=pretrained)
+        base_vgg16 = vgg16(pretrained=pretrained)
         self.shared_cnn_layers = base_vgg16.features
         self.adap_avg_pool = base_vgg16.avgpool
         self.shared_fc_layers = base_vgg16.classifier[:6]
